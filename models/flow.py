@@ -3,7 +3,6 @@ from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 import matplotlib.pyplot as plt
 from scipy.stats import norm
-import deepul.pytorch_util as ptu
 import torch
 import torch.optim as optim
 import torch.utils.data as data
@@ -11,8 +10,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from tqdm import trange, tqdm_notebook
+import utils.pytorch_util as ptu
 
-ptu.set_gpu_mode(False)
+ptu.set_gpu_mode(True)
+
 class MLP(nn.Module):
     def __init__(self, input_size, n_hidden, hidden_size, output_size):
         super().__init__()
@@ -110,12 +111,12 @@ class RealNVP(nn.Module):
 class Flow(nn.Module):
     def __init__(self, latent_dim=2):
         super().__init__()
-        self.nvp = RealNVP[AffineTransform("left", n_hidden=2, hidden_size=64),
+        self.nvp = RealNVP([AffineTransform("left", n_hidden=2, hidden_size=64),
                     AffineTransform("right", n_hidden=2, hidden_size=64),
                     AffineTransform("left", n_hidden=2, hidden_size=64),
                     AffineTransform("right", n_hidden=2, hidden_size=64),
                     AffineTransform("left", n_hidden=2, hidden_size=64),
-                    AffineTransform("right", n_hidden=2, hidden_size=64)]
+                    AffineTransform("right", n_hidden=2, hidden_size=64)] )
 
     def reverse(self, y):
         return self.nvp.invert_flow(y)
@@ -123,9 +124,11 @@ class Flow(nn.Module):
     def forward(self, z):
         return self.nvp.flow(z)
 
+    def loss(self, x):
+        return self.nvp.nll(x)
 
 
-def q1_b(train_data, test_data, dset_id):
+def q1_b(train_data, test_data):
     """
     train_data: An (n_train, 2) numpy array of floats in R^2
     test_data: An (n_test, 2) numpy array of floats in R^2
@@ -159,24 +162,24 @@ def q1_b(train_data, test_data, dset_id):
     # train
     train_losses, test_losses = train_epochs(real_nvp, train_loader, test_loader, dict(epochs=250, lr=5e-3))
 
-    # heatmap
-    dx, dy = 0.025, 0.025
-    if dset_id == 1:  # face
-        x_lim = (-4, 4)
-        y_lim = (-4, 4)
-    elif dset_id == 2:  # two moons
-        x_lim = (-1.5, 2.5)
-        y_lim = (-1, 1.5)
-    y, x = np.mgrid[slice(y_lim[0], y_lim[1] + dy, dy),
-                    slice(x_lim[0], x_lim[1] + dx, dx)]
-    mesh_xs = ptu.FloatTensor(np.stack([x, y], axis=2).reshape(-1, 2))
-    densities = np.exp(ptu.get_numpy(real_nvp.log_prob(mesh_xs)))
+    # # heatmap
+    # dx, dy = 0.025, 0.025
+    # if dset_id == 1:  # face
+    #     x_lim = (-4, 4)
+    #     y_lim = (-4, 4)
+    # elif dset_id == 2:  # two moons
+    #     x_lim = (-1.5, 2.5)
+    #     y_lim = (-1, 1.5)
+    # y, x = np.mgrid[slice(y_lim[0], y_lim[1] + dy, dy),
+    #                 slice(x_lim[0], x_lim[1] + dx, dx)]
+    # mesh_xs = ptu.FloatTensor(np.stack([x, y], axis=2).reshape(-1, 2))
+    # densities = np.exp(ptu.get_numpy(real_nvp.log_prob(mesh_xs)))
 
     # latents
     z, _ = real_nvp.flow(ptu.FloatTensor(train_data))
     latents = ptu.get_numpy(z)
 
-    return train_losses, test_losses, densities, latents
+    return train_losses, test_losses, latents
 
 
 def train(model, train_loader, optimizer):

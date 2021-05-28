@@ -2,3 +2,4 @@ trained_models/
 data/
 **.pyc
 .vscode/
+.ipynb_checkpoints/

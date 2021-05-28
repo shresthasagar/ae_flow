@@ -41,9 +41,6 @@ class MNISTEncoder(nn.Module):
             nn.LeakyReLU(),
     
             nn.Conv2d(ngf*8, nz, 2, 2, 0, bias=False),
-            nn.BatchNorm2d(nz),
-            nn.LeakyReLU(),
-            
             nn.Flatten()
         )
 
