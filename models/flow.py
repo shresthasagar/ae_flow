@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import trange, tqdm_notebook
 import utils.pytorch_util as ptu
+from dataset import GMM
 
 ptu.set_gpu_mode(True)
 
@@ -108,6 +109,78 @@ class RealNVP(nn.Module):
         return - self.log_prob(x).mean()
 
 
+class RealNVPSupervised(nn.Module):
+    def __init__(self, transforms, means):
+        super().__init__()
+
+        self.priors = [torch.distributions.MultivariateNormal(torch.tensor(mean, dtype=torch.float32).to(ptu.device), torch.eye(2).to(ptu.device)) for mean in means]
+        self.prior = torch.distributions.MultivariateNormal(torch.zeros(2).to(ptu.device), torch.eye(2).to(ptu.device))
+        self.transforms = nn.ModuleList(transforms)
+        
+    def flow(self, x):
+        # maps x -> z, and returns the log determinant (not reduced)
+        z, log_det = x, torch.zeros_like(x)
+        for op in self.transforms:
+            z, delta_log_det = op.forward(z)
+            log_det += delta_log_det
+        return z, log_det
+
+    def invert_flow(self, z):
+        # z -> x (inverse of f)
+        for op in reversed(self.transforms):
+            z, _ = op.forward(z, reverse=True)
+        return z
+
+    def log_prob(self, x, label):
+        z, log_det = self.flow(x)
+        probs = [self.priors[0].log_prob(z[i]) for i in range(len(label))]
+        # print('shapes probs, z, log_det', torch.tensor(probs).shape, z.shape, log_det.shape, torch.sum(log_det, dim=1).shape  )
+        print(z[0])
+        return torch.sum(log_det, dim=1) + torch.tensor(probs).to(ptu.device)
+
+    def log_prob_old(self, x, label):
+        z, log_det = self.flow(x)
+        # probs = [self.prior.log_prob(z[i]) for i in range(len(label))]
+        # print('shapes probs, z, log_det', torch.tensor(probs).shape, z.shape, log_det.shape, torch.sum(log_det, dim=1).shape  )
+        # print(z[0])
+        # return torch.sum(log_det, dim=1) + torch.tensor(probs).to(ptu.device)
+        # return torch.sum(log_det, dim=1) + torch.sum(self.prior.log_prob(z), dim=1)
+        sum = 0
+        for i in range(len(label)):
+            sum = sum + self.priors[label[i]].log_prob(z[i])
+        
+        return torch.mean(torch.sum(log_det, dim=1)) + torch.mean(sum)
+
+    def sample(self, num_samples, label):
+        z = self.priors[label].sample([num_samples, 2])
+        return self.invert_flow(z)
+
+    def nll(self, x, label):
+        return - self.log_prob_old(x, label)
+
+class FlowSemiSupervised(nn.Module):
+    def __init__(self, latent_dim=2):
+        super().__init__()
+        gmm = GMM(radius=7, num_classes=10)
+        self.nvp = RealNVPSupervised([AffineTransform("left", n_hidden=2, hidden_size=64),
+                    AffineTransform("right", n_hidden=2, hidden_size=64),
+                    AffineTransform("left", n_hidden=2, hidden_size=64),
+                    AffineTransform("right", n_hidden=2, hidden_size=64),
+                    AffineTransform("left", n_hidden=2, hidden_size=64),
+                    AffineTransform("right", n_hidden=2, hidden_size=64)], gmm.means )
+
+
+
+    def reverse(self, y):
+        return self.nvp.invert_flow(y)
+
+    def forward(self, z):
+        return self.nvp.flow(z)
+
+    def loss(self, x, label):
+        return self.nvp.nll(x, label)
+
+
 class Flow(nn.Module):
     def __init__(self, latent_dim=2):
         super().__init__()
@@ -118,6 +191,8 @@ class Flow(nn.Module):
                     AffineTransform("left", n_hidden=2, hidden_size=64),
                     AffineTransform("right", n_hidden=2, hidden_size=64)] )
 
+
+
     def reverse(self, y):
         return self.nvp.invert_flow(y)
 
@@ -126,6 +201,9 @@ class Flow(nn.Module):
 
     def loss(self, x):
         return self.nvp.nll(x)
+
+
+
 
 
 def q1_b(train_data, test_data):
